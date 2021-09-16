@@ -17,11 +17,11 @@ knitr::opts_chunk$set(echo = FALSE,warning=FALSE,message=FALSE,fig.pos="H",out.e
 
 ## Abstract
 
-Netflix employs a recommendation system based on how many stars (i.e., 0-5) a user might give a movie. In October 2006, Netflix created a challenge to improve upon its recommendation engine by 10% with a top prize of $1 million. In this report, I adopt some of the data analysis strategies used by the winning team to create a movie recommendation algorithm. The database contains 20 million ratings compiled by GroupLens research lab. The algorithm is a linear model that minimizes the root mean square error (RMSE) of predicted movie ratings versus actual ratings using the movie title, genre, release date, and user ID as input. To achieve a minimal RMSE, the algorithm performs regularization to penalize large variations of movie ratings caused by categories with few ratings. A 10% improvement over Netflix's recommendation engine marks a target RMSE of 0.8775 stars. The RMSE from the model in this report is 0.86236 stars.  
+Netflix employs a recommendation system based on how many stars (i.e., 0-5) a user might give a movie. In October 2006, Netflix created a challenge to improve upon its recommendation engine by 10% with a top prize of $1 million. In this report, I adopt some of the data analysis strategies used by the winning team to create a movie recommendation algorithm. The database contains 20 million ratings compiled by GroupLens research lab. The algorithm is a linear model that minimizes the root mean square error (RMSE) of predicted movie ratings versus actual ratings using the movie title, genre, release date, and user ID as input. To achieve a minimal RMSE, the algorithm performs regularization to penalize large variations of movie ratings caused by categories with few ratings. A 10% improvement over Netflix's recommendation engine marks a target RMSE of 0.8775 stars. The RMSE from the model in this report is 0.86326 stars.  
 
 ## Data
 
-The database contains 20 million ratings for over 27,000 movies by over 138,000 users. For the purpose of this report, I use a subset of this data found within the **dslabs** package of the R programming language. This subset contains 10 million ratings for 10,000 movies and 72,000 users. Details about this dataset can be found [here](https://grouplens.org/datasets/movielens/10m/). Ratings are on a 0-5 scale with increments of 0.5. In this report, I split the dataset into training and validation sets using a 90-10 ratio, respectively. The training set, called **edx**, is used to train the model while the validation set, called **validation**, is only for testing the algorithm. I copied code from the *EDX Capstone Project* [Create Train and Final Hold-out Test Sets](https://learning.edx.org/course/course-v1:HarvardX+PH125.9x+2T2021/block-v1:HarvardX+PH125.9x+2T2021+type@sequential+block@e8800e37aa444297a3a2f35bf84ce452/block-v1:HarvardX+PH125.9x+2T2021+type@vertical+block@e9abcdd945b1416098a15fc95807b5db) to download and partition the dataset.
+The database contains 20 million ratings for over 27,000 movies by over 138,000 users. For the purpose of this report, I use a subset of this data found within the **dslabs** package of the R programming language. This subset contains 10 million ratings for 10,000 movies and 72,000 users. Details about this dataset can be found [here](https://grouplens.org/datasets/movielens/10m/). Ratings are on a 0-5 scale with increments of 0.5. In this report, I split the dataset into training and validation sets using a 90-10 ratio, respectively. The training set was further partitioned used a 80-20 ratio in order to obtain a test set for parameter optimization. The training set, called **train**, is used to train the model while the validation set, called **validation**, is only for testing the final algorithm. I copied code from the *EDX Capstone Project* [Create Train and Final Hold-out Test Sets](https://learning.edx.org/course/course-v1:HarvardX+PH125.9x+2T2021/block-v1:HarvardX+PH125.9x+2T2021+type@sequential+block@e8800e37aa444297a3a2f35bf84ce452/block-v1:HarvardX+PH125.9x+2T2021+type@vertical+block@e9abcdd945b1416098a15fc95807b5db) to download and partition the dataset.
 
 
 ```{r dataset_code, include=TRUE}
@@ -67,6 +67,18 @@ removed <- anti_join(temp, validation)
 edx <- rbind(edx, removed)
 
 rm(dl, ratings, movies, test_index, temp, movielens, removed)
+
+test_index <- createDataPartition(y = edx$rating, times = 1, p = 0.2, 
+                                  list = FALSE)
+train <- edx[-test_index,]
+test <- edx[test_index,]
+
+## Making testing partition comparable by taking out movies and users not present on training partition   
+
+test <-test %>% 
+  semi_join(train, by = "movieId") %>%
+  semi_join(train, by = "userId")
+
 ```
 
 The packages used in this report are shown below. `tidyverse` and `dplyr` are functional libraries for chaining code snippets together and performing some arithmetic. `caret` is a machine learning library. `lubridate` contains functions for manipulating date-time data. `gridExtra` enables subplots. `OneR` contains a useful function for binning data. `knitr` and `kableExtra` are packages that create this document. 
@@ -86,18 +98,20 @@ library(kableExtra)
 The **edx** training set contains 6 feature classes: `userId`,  `movieId`, `rating`, `timestamp`, `title`, and `genres`. The `title` field contains the release year of each film, so I extract this value into its own feature column called `release` for both the training and validation sets. I further transform the **edx** and **validation** sets into *"tidytables"* by splitting the `genres` column into individual values and transposing them into rows. This *tidytable* is seperately called **edx_genres_ungroup** and **validation_genres_ungroup** for the training and validation sets, respectively. 
 
 ```{r dataset, results='asis'}
-edx <- edx %>% mutate(release=as.numeric(str_sub(title,-5,-2)))
+train <- train %>% mutate(release=as.numeric(str_sub(title,-5,-2)))
+test <- test %>% mutate(release=as.numeric(str_sub(title,-5,-2)))
 validation <- validation %>% mutate(release=as.numeric(str_sub(title,-5,-2)))
 
-edx_genres_ungroup<-edx %>% separate_rows(genres,sep="\\|") %>% filter(genres!="(no genres listed)") %>% mutate(date=round_date(as_datetime(timestamp),"week")) 
+train_genres_ungroup<-train %>% separate_rows(genres,sep="\\|") %>% filter(genres!="(no genres listed)") %>% mutate(date=round_date(as_datetime(timestamp),"week")) 
+test_genres_ungroup<-test %>% separate_rows(genres,sep="\\|") %>% filter(genres!="(no genres listed)") %>% mutate(date=round_date(as_datetime(timestamp),"week")) 
 validation_genres_ungroup<-validation %>% separate_rows(genres,sep="\\|") %>% filter(genres!="(no genres listed)") %>% mutate(date=round_date(as_datetime(timestamp),"week")) 
 
-kable(head(edx_genres_ungroup,5), caption="*Tidy* format of the training and validation datasets.") %>% kable_styling(latex_options = "hold_position")
+kable(head(train_genres_ungroup,5), caption="*Tidy* format of the training and test datasets.") %>% kable_styling(latex_options = "hold_position")
 ```
 
 ## Exploratory Data Analysis
 ```{r overall_mean}
-overall <- mean(edx$rating)
+overall <- mean(train$rating)
 ```
 
 The law of averages states that as the number of samples increases, the standard error of the average of a random variable decreases. Here, we examine the distribution of ratings grouped by the specific movie, user, genre, or release date in order to assess where rating variability comes from. If large variations occur where few ratings exist, then the law of averages might not hold. Left unaccounted for, these populations can negatively affect the model by including statistically unimportant variability.    
@@ -107,7 +121,7 @@ Some movies are generally rated higher or lower than others for a variety of rea
 
 ```{r histogram_movieId, echo=TRUE, fig.width=4,fig.height=2, fig.align="center", fig.cap="Histogram of how often movies recieve the designated number of reviews."}
 
-edx %>% group_by(movieId) %>% summarize(N=n()) %>% ggplot(aes(N)) + 
+train %>% group_by(movieId) %>% summarize(N=n()) %>% ggplot(aes(N)) + 
   geom_histogram(bins=30, color="white") + scale_x_log10() + 
   labs(title="Histogram of # of movie reviews",x="# of Reviews",y="Frequency")
 ```
@@ -116,7 +130,7 @@ The histogram in Figure 1 shows how often movies have $x$ number of ratings (or 
 
 ```{r boxplot_movieId, echo=TRUE, fig.width=6,fig.align="center", fig.cap="Average movie rating binned by the number of ratings for that movie. The red line is the global average rating. Binwidths are approximately 1000 ratings. Ratings distribution widens with decreasing number of ratings."}
 
-edx %>% group_by(movieId) %>% summarize(N=n(), avg=mean(rating)) %>% 
+train %>% group_by(movieId) %>% summarize(N=n(), avg=mean(rating)) %>% 
   ggplot(aes(x=N,y=avg)) + 
   geom_boxplot(aes(group=cut_width(N,1000))) + 
   geom_hline(yintercept=overall,color="red") +
@@ -131,11 +145,11 @@ Similar to the movie effect, the user effect describes how often users rate movi
 
 ```{r histogram_userId, echo=TRUE, fig.width=4,fig.height=2,fig.align="center", fig.cap="Histogram of how often users give the designated number of ratings. Red lines are the quartiles, and the blue line is a rough cutoff value below which rating variability might increase."}
 #Examine user effect. Some users are more active in reviewing movies. 
-quantiles_usr<- edx %>% group_by(userId) %>% summarize(N=n()) %>% pull(N) %>% quantile()
+quantiles_usr<- train %>% group_by(userId) %>% summarize(N=n()) %>% pull(N) %>% quantile()
 quantiles_usr
 
 #histogram of number of reviews by users divided into quartiles.
-edx %>% group_by(userId) %>% summarize(N=n()) %>% ggplot(aes(N)) + 
+train %>% group_by(userId) %>% summarize(N=n()) %>% ggplot(aes(N)) + 
   geom_histogram(bins=30, color="white") + scale_x_log10() +  
   labs(title="Histogram of # of movie reviews by user",
        x="# of Reviews",y="Frequency") + 
@@ -147,7 +161,7 @@ Some users might give more critical ratings on average while others love everyth
 
 ```{r errorbar_userId, fig.width=8, fig.align="center", fig.cap="Errorbar plot of how users who give few ratings show larger variability in those ratings on average. Also, ratings decrease as users review more titles."}
 
-edx %>% 
+train %>% 
   group_by(userId) %>% 
   summarize(N=n(),rounded=plyr::round_any(N,10),
             avg=mean(rating),se=sd(rating)/sqrt(rounded)) %>% group_by(rounded) %>%
@@ -166,10 +180,10 @@ Similar to the *movie effect*, large ratings variability exists when users rate 
 
 ### Genre Effect
 The user community might favor certain genres over others, so those genres receive more and better ratings. Table 2 ranks genres by their number of ratings alongside their average rating and standard error. The Drama, Comedy, and Action genres appear to attract the most attention from reviewers while specialist films (e.g., documentaries) attract the least.
-```{r edx_genres_table,results="asis",fig.align="center",fig.pos="!H"}
-edx_genres<- edx_genres_ungroup %>% group_by(genres) %>% summarize(N=n(),avg=mean(rating),se=sd(rating)/sqrt(N)) %>% arrange(desc(N))
-d1<-head(edx_genres,5)
-d2<-tail(edx_genres,5)
+```{r train_genres_table,results="asis",fig.align="center",fig.pos="!H"}
+train_genres<- train_genres_ungroup %>% group_by(genres) %>% summarize(N=n(),avg=mean(rating),se=sd(rating)/sqrt(N)) %>% arrange(desc(N))
+d1<-head(train_genres,5)
+d2<-tail(train_genres,5)
 kable(list(d1,d2),caption="Five most rated genres (left) and Five least rated genres (right). *avg* is the average rating for a genre and *se* is the corresponding standard error.",valign='t') %>% kable_styling(latex_options = "hold_position")
 ```
 
@@ -177,7 +191,7 @@ Knowing the most and least popular genres, we shall see if their popularity corr
 
 ```{r errorbar_genre, echo=TRUE, fig.width=8, fig.align="center", fig.cap="Errorbar plot of average rating by genre. Colors are the number of ratings in each category. The labels are the mean deviations from the global average rating, marked red."}
 
-edx_genres %>% 
+train_genres %>% 
   ggplot(aes(x=reorder(genres,(abs(avg-overall))),
              y =avg, ymin =avg - 2*se, ymax = avg + 2*se,color=N,
              label=round(avg-overall,3))) + 
@@ -197,8 +211,8 @@ edx_genres %>%
 Although ratings do not exhibit much internal variation within each genre, the average ratings among genres show clear differences. The largest deviations from the global average rating belong to Film-Noir, Documentary, War, and IMAX films--all of which being historical or specialty films. These films also have the fewest ratings of all the genres, so their deviations might be a result of not enough ratings to make reliable interpretations. The boxplot in Figure 6, below, examines this possibility by binning the number of ratings among all genres and then potting these bins against their rating deviations (same as Figure 5). The first bin shows the largest interquartile range and whiskers, so a sampling bias is likley present among genres.
 ```{r boxplot_genre,echo=TRUE, fig.width=5, fig.height=4, fig.align="center",fig.cap="Boxplot showing how genres with fewer numbers of ratings show greater deviations and variability from the global average rating."}
 
-edx_genres %>% select(N) %>% OneR::bin(nbins=6) %>% 
-  set_names("Bins") %>% cbind(edx_genres) %>% 
+train_genres %>% select(N) %>% OneR::bin(nbins=6) %>% 
+  set_names("Bins") %>% cbind(train_genres) %>% 
   mutate(dev=abs(avg-overall)) %>% 
   ggplot(aes(x=Bins,y=dev)) + geom_boxplot() + 
   theme(axis.text.x = element_text(angle = 45, hjust=1)) +
@@ -211,7 +225,7 @@ edx_genres %>% select(N) %>% OneR::bin(nbins=6) %>%
 Examining movie ratings by time shows any temporal changes in how users rate movies. Figure 7 contains four plots that show the number of ratings and average ratings of movies throughout time. The years on the left and right plots are the film release dates and film rating dates, respectively. Immediately prevalent are the strong trends related to film release dates. We do not observe strong trends with the rating dates, although weak correlations still exist. As such, this report uses the release year to help create the machine learning model.
 
 ```{r time_plots, fig.width=8,fig.align="center", fig.cap="Temporal evolution of the number of ratings and the average ratings. The date axes on the left plots are the release dates of films while the right plots are rating dates. Strong trends exist in relation to release date, so this report uses release date in the final model."}
-p1<-edx_genres_ungroup %>% 
+p1<-train_genres_ungroup %>% 
   group_by(date) %>% 
   summarize(N=n()) %>% 
   ggplot(aes(x=date,y=N)) + 
@@ -219,7 +233,7 @@ p1<-edx_genres_ungroup %>%
   geom_smooth() +
   ylim(0,1.5e5) +
   labs(title="Rating Date vs. # of ratings",x="Rating Date",y="N")
-p2<-edx_genres_ungroup %>% 
+p2<-train_genres_ungroup %>% 
   group_by(release) %>% 
   summarize(N=n()) %>% 
   ggplot(aes(x=release,y=N)) +
@@ -229,7 +243,7 @@ p2<-edx_genres_ungroup %>%
   labs(title="Movie Release Date vs. # of ratings",x="Release Date",y="N")
 
 #plot average rating by year
-p3<-edx_genres_ungroup %>% 
+p3<-train_genres_ungroup %>% 
   group_by(date) %>% 
   summarize(avg=mean(rating)) %>% 
   ggplot(aes(x=date,y=avg)) + 
@@ -238,7 +252,7 @@ p3<-edx_genres_ungroup %>%
   geom_hline(yintercept=overall,color="red") +
   ylim(3,4.25) + 
   labs(title="Rating Date vs. Avg Rating",x="Rating Date",y="Avg")
-p4<-edx_genres_ungroup %>% 
+p4<-train_genres_ungroup %>% 
   group_by(release) %>% 
   summarize(avg=mean(rating)) %>% 
   ggplot(aes(x=release,y=avg)) +
@@ -269,75 +283,75 @@ The first term in the above equation is simple least squares while the second te
 $$\hat{b_i}(\lambda)=\frac{1}{\lambda+n_i}\sum^{n}_{u=1}(y_{u,i}-\hat{\mu})$$
 where $\hat{\mu}$ is the global average rating adjusted for preceding $b$ terms. As an example, $\hat{\mu}$ for the `movieId` term, $b_i$, is just the global mean, $\mu$, because no preceding adjustments have been made. $\hat{\mu}$ for $b_u$ will subsequently be $(\mu+b_i)$, and the sum will be over users, $u$. Next, $\hat{\mu}$ for the genre term is $(\mu+b_i+b_u)$. This recursion continues for the remaining $b$ terms.
 
-Converting theory into code gives the following function that calculates the $RMSE$ from the described model. Although this function is the final estimate, I show how adding each term reduces the $RMSE$ in the **Results** section.  
+Converting theory into code gives the following function that calculates the $RMSE$ from the described model. Although this function is the final estimate, I show how adding each term reduces the $RMSE$ in the **Results** section. Note that this model will be run on the validation dataset using the optimized $\lambda$ value from training. More specifically, `test_genres_ungroup` will be replaced by `validation_genres_ungroup`, below. The $RMSE$ obtained from the validation run will be the final result. 
 
 ```{r RMSE_Calc, eval=FALSE, echo=TRUE}
 sapply(lambdas, function(l){
-    b_i <- edx_genres_ungroup %>%
+    b_i <- train_genres_ungroup %>%
       group_by(movieId) %>%
       summarize(b_i = sum(rating - overall)/(n()+l))
-    b_u <- edx_genres_ungroup %>%
+    b_u <- train_genres_ungroup %>%
       left_join(b_i, by="movieId") %>%
       group_by(userId) %>%
       summarize(b_u = sum(rating - b_i - overall)/(n()+l))
-    b_g <- edx_genres_ungroup %>% 
+    b_g <- train_genres_ungroup %>% 
       left_join(b_i, by="movieId") %>%
       left_join(b_u, by="userId") %>%
       group_by(genres) %>%
       summarize(b_g = sum(rating - b_i - b_u - overall)/(n()+l))
-    b_t <- edx_genres_ungroup %>%  #non-regularized time effect calculation. 
+    b_t <- train_genres_ungroup %>%  #non-regularized time effect calculation. 
       left_join(b_i, by="movieId") %>%
       left_join(b_u, by="userId") %>%
       left_join(b_g, by="genres") %>%
       group_by(release) %>%
       summarize(b_t = mean(rating - b_i - b_u - b_g - overall))
     
-    preds <-validation_genres_ungroup %>% 
+    preds <-test_genres_ungroup %>% 
       left_join(b_i, by = "movieId") %>% left_join(b_u, by = "userId") %>% 
       left_join(b_g, by = "genres") %>% left_join(b_t, by = "release") %>% 
       mutate(pred = overall + b_i + b_u + b_g + b_t) %>% pull(pred)
     
-    return(RMSE(preds, validation_genres_ungroup$rating))})
+    return(RMSE(preds, test_genres_ungroup$rating))})
 ```
 
 
 ## Results & Discussion
 ```{r all_models}
-error <- data.frame("Method"="Global Average","RMSE"=RMSE(plyr::round_any(overall,0.5),validation$rating))
-movie_model<-edx %>% group_by(movieId) %>% summarize(b_i=mean(rating-overall)) 
-predictions<-validation %>% left_join(movie_model,by="movieId") %>% mutate(pred=overall + b_i) %>% pull(pred) 
+error <- data.frame("Method"="Global Average","RMSE"=RMSE(plyr::round_any(overall,0.5),test$rating))
+movie_model<-train %>% group_by(movieId) %>% summarize(b_i=mean(rating-overall)) 
+predictions<-test %>% left_join(movie_model,by="movieId") %>% mutate(pred=overall + b_i) %>% pull(pred) 
 
-error<-rbind(error,data.frame("Method"="Movie","RMSE"=RMSE(predictions,validation$rating)))
+error<-rbind(error,data.frame("Method"="Movie","RMSE"=RMSE(predictions,test$rating)))
 
 #MOVIE MODEL REGULARIZED
 lambdas <- seq(0, 10, 0.25) #trial regularization parameters
 rmses <- sapply(lambdas, function(l){
-  b_i <- edx %>%
+  b_i <- train %>%
     group_by(movieId) %>%
     summarize(b_i = sum(rating - overall)/(n()+l)) #computed movie effect that regularizes biases incurred by small sample populations 
-  preds <-validation %>% left_join(b_i, by = "movieId") %>% mutate(pred = overall + b_i) %>% pull(pred)  #predictions
-  return(RMSE(preds, validation$rating))
+  preds <-test %>% left_join(b_i, by = "movieId") %>% mutate(pred = overall + b_i) %>% pull(pred)  #predictions
+  return(RMSE(preds, test$rating))
 })
 l<-lambdas[which.min(rmses)] #get lambda value that minimizes the error, calculated above
-model<-edx %>% group_by(movieId) %>% summarize(b_i = sum(rating - overall)/(n()+l)) #Compute final model based on regularization, above.
-predictions<-validation %>% left_join(model,by="movieId") %>% mutate(pred=overall + b_i) %>% pull(pred)  #extract predicted values for comparing to the validation dataset
+model<-train %>% group_by(movieId) %>% summarize(b_i = sum(rating - overall)/(n()+l)) #Compute final model based on regularization, above.
+predictions<-test %>% left_join(model,by="movieId") %>% mutate(pred=overall + b_i) %>% pull(pred)  #extract predicted values for comparing to the test dataset
 
-error<-rbind(error,data.frame("Method"="Movie (R)","RMSE"=RMSE(predictions,validation$rating))) #error table of predictions vs. validation dataset
+error<-rbind(error,data.frame("Method"="Movie (R)","RMSE"=RMSE(predictions,test$rating))) #error table of predictions vs. test dataset
 
 #MOVIE + USER MODEL REGULARIZED
 lambdas <- seq(0, 10, 0.25) #trial regularization parameters
 get_rmse <- function(lambdas) {
   sapply(lambdas, function(l){
-    b_i <- edx %>% #movie effect calculated earlier
+    b_i <- train %>% #movie effect calculated earlier
       group_by(movieId) %>%
       summarize(b_i = sum(rating - overall)/(n()+l))
-    b_u <- edx %>% #user effect calculation using same methodology as movie effect
+    b_u <- train %>% #user effect calculation using same methodology as movie effect
       left_join(b_i, by="movieId") %>%
       group_by(userId) %>%
       summarize(b_u = sum(rating - b_i - overall)/(n()+l))
-    preds <-validation %>% left_join(b_i, by = "movieId") %>% left_join(b_u, by = "userId") %>% 
+    preds <-test %>% left_join(b_i, by = "movieId") %>% left_join(b_u, by = "userId") %>% 
       mutate(pred = overall + b_i + b_u) %>% pull(pred)
-    return(RMSE(preds, validation$rating))
+    return(RMSE(preds, test$rating))
   })}
 rmse <- get_rmse(lambdas)
 
@@ -351,22 +365,22 @@ error<-rbind(error,data.frame("Method"="Movie (R) + User (R)","RMSE"=rmse))
 lambdas <- seq(13, 16, 0.25) #trial regularization parameters
 get_rmse <- function(lambdas) {
   sapply(lambdas, function(l){
-    b_i <- edx_genres_ungroup %>%
+    b_i <- train_genres_ungroup %>%
       group_by(movieId) %>%
       summarize(b_i = sum(rating - overall)/(n()+l))
-    b_u <- edx_genres_ungroup %>%
+    b_u <- train_genres_ungroup %>%
       left_join(b_i, by="movieId") %>%
       group_by(userId) %>%
       summarize(b_u = sum(rating - b_i - overall)/(n()+l))
-    b_g <- edx_genres_ungroup %>% #genre effect calculation using same methodology as the others
+    b_g <- train_genres_ungroup %>% #genre effect calculation using same methodology as the others
       left_join(b_i, by="movieId") %>%
       left_join(b_u, by="userId") %>%
       group_by(genres) %>%
       summarize(b_g = sum(rating - b_i - b_u - overall)/(n()+l))
     
-    preds <-validation_genres_ungroup %>% left_join(b_i, by = "movieId") %>% left_join(b_u, by = "userId") %>% left_join(b_g, by = "genres") %>% 
+    preds <-test_genres_ungroup %>% left_join(b_i, by = "movieId") %>% left_join(b_u, by = "userId") %>% left_join(b_g, by = "genres") %>% 
       mutate(pred = overall + b_i + b_u + b_g) %>% pull(pred)
-    return(RMSE(preds, validation_genres_ungroup$rating))
+    return(RMSE(preds, test_genres_ungroup$rating))
   })}
 rmse <- get_rmse(lambdas)
 
@@ -378,22 +392,64 @@ error<-rbind(error,data.frame("Method"="Movie (R) + User (R) + Genre (R)","RMSE"
 A sequence of $\lambda$ values are input to the model in order to find the one that minimizes the $RMSE$. Figure 8, below, shows the optimal value of $\lambda$ based on $RMSE$ of the final model. 
 
 ```{r compute_final_model,fig.width=4,fig.height=4,fig.align="center",fig.cap="Trial lambda values versus their RMSE for the final model. The optimal lambda value minimizes the RMSE."}
-lambdas <- seq(13, 15, .25) #trial regularization parameters
+lambdas <- seq(11.5, 13.5, .25) #trial regularization parameters
 get_rmse <- function(lambdas) {
   sapply(lambdas, function(l){
-    b_i <- edx_genres_ungroup %>%
+    b_i <- train_genres_ungroup %>%
       group_by(movieId) %>%
       summarize(b_i = sum(rating - overall)/(n()+l))
-    b_u <- edx_genres_ungroup %>%
+    b_u <- train_genres_ungroup %>%
       left_join(b_i, by="movieId") %>%
       group_by(userId) %>%
       summarize(b_u = sum(rating - b_i - overall)/(n()+l))
-    b_g <- edx_genres_ungroup %>% #genre effect calculation using same methodology as the others
+    b_g <- train_genres_ungroup %>% #genre effect calculation using same methodology as the others
       left_join(b_i, by="movieId") %>%
       left_join(b_u, by="userId") %>%
       group_by(genres) %>%
       summarize(b_g = sum(rating - b_i - b_u - overall)/(n()+l))
-    b_t <- edx_genres_ungroup %>%  #non-regularized time effect calculation. No regularization needed because exploratory data analysis showed anomalous levels of variability among movie release years.
+    b_t <- train_genres_ungroup %>%  #non-regularized time effect calculation. No regularization needed because exploratory data analysis showed anomalous levels of variability among movie release years.
+      left_join(b_i, by="movieId") %>%
+      left_join(b_u, by="userId") %>%
+      left_join(b_g, by="genres") %>%
+      group_by(release) %>%
+      summarize(b_t = mean(rating - b_i - b_u - b_g - overall))
+    
+    preds <-test_genres_ungroup %>% left_join(b_i, by = "movieId") %>% left_join(b_u, by = "userId") %>% 
+      left_join(b_g, by = "genres") %>% left_join(b_t, by = "release") %>% 
+      mutate(pred = overall + b_i + b_u + b_g + b_t) %>% pull(pred)
+    
+    return(RMSE(preds, test_genres_ungroup$rating))
+  })}
+rmse <- get_rmse(lambdas)
+
+l<-lambdas[which.min(rmse)] #get lambda value that minimizes the error, calculated above
+
+qplot(lambdas, rmse,geom="point") + geom_vline(xintercept=l) +  annotate(geom="text",x=l-0.04,y=rmse[lambdas==l]+.000001,label=paste0("Best Lambda: ",l),angle=90) #plot rmse vs. lambdas to obtain optimal value
+
+rmse <- get_rmse(l)
+error<-rbind(error,data.frame("Method"="Movie (R) + User (R) + Genre (R) + Release Year","RMSE"=rmse))
+
+```
+
+An optimal value of $\lambda$ was calculated for each model containing successively more $b$ terms. Table 3, below, shows the $RMSE$ output of each model with "(R)" indicating regularization. The $RMSE$ decreases for every additional $b$ term. The last row of Table 3 displays the $RMSE$ from testing the model on the validation dataset using the $\lambda$ value from training the final model. The $RMSE$ of the final model is similar for both the test and validation sets, affirming that these sets have similar populations. 
+
+```{r validation}
+
+get_rmse <- function(lambdas) {
+  sapply(lambdas, function(l){
+    b_i <- train_genres_ungroup %>%
+      group_by(movieId) %>%
+      summarize(b_i = sum(rating - overall)/(n()+l))
+    b_u <- train_genres_ungroup %>%
+      left_join(b_i, by="movieId") %>%
+      group_by(userId) %>%
+      summarize(b_u = sum(rating - b_i - overall)/(n()+l))
+    b_g <- train_genres_ungroup %>% #genre effect calculation using same methodology as the others
+      left_join(b_i, by="movieId") %>%
+      left_join(b_u, by="userId") %>%
+      group_by(genres) %>%
+      summarize(b_g = sum(rating - b_i - b_u - overall)/(n()+l))
+    b_t <- train_genres_ungroup %>%  #non-regularized time effect calculation. No regularization needed because exploratory data analysis showed anomalous levels of variability among movie release years.
       left_join(b_i, by="movieId") %>%
       left_join(b_u, by="userId") %>%
       left_join(b_g, by="genres") %>%
@@ -404,18 +460,16 @@ get_rmse <- function(lambdas) {
       left_join(b_g, by = "genres") %>% left_join(b_t, by = "release") %>% 
       mutate(pred = overall + b_i + b_u + b_g + b_t) %>% pull(pred)
     
-    return(RMSE(preds, validation_genres_ungroup$rating))
+    idx<-which(is.na(preds))
+    
+    return(RMSE(preds[-idx], validation_genres_ungroup$rating[-idx]))
   })}
-rmse <- get_rmse(lambdas)
-
-l<-lambdas[which.min(rmse)] #get lambda value that minimizes the error, calculated above
-
-qplot(lambdas, rmse,geom="point") + geom_vline(xintercept=l) +  annotate(geom="text",x=l-0.04,y=rmse[lambdas==l]+.000001,label=paste0("Best Lambda: ",l),angle=90) #plot rmse vs. lambdas to obtain optimal value
 
 rmse <- get_rmse(l)
-error<-rbind(error,data.frame("Method"="Movie (R) + User (R) + Genre (R) + Release Year","RMSE"=rmse))
+error<-rbind(error,data.frame("Method"="Final Model on Validation Set","RMSE"=rmse))
 ```
-An optimal value of $\lambda$ was calculated for each model containing successively more $b$ terms. Table 3, below, shows the $RMSE$ output of each model with "(R)" indicating regularization. The $RMSE$ decreases for every additional $b$ term.
+
+
 ```{r error_table}
 kable(error,caption="RMSE values for the specified model. (R) indicates that regularization was done. Notice how the RMSE decreases with regularization and additional terms.") %>% kable_styling(latex_options = "hold_position")
 ```
