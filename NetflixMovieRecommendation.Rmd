@@ -12,6 +12,7 @@ output:
 ---
 
 ```{r setup, include=FALSE}
+if(!require(knitr)) install.packages("knitr", repos = "http://cran.us.r-project.org")
 knitr::opts_chunk$set(echo = FALSE,warning=FALSE,message=FALSE,fig.pos="H",out.extra = '')
 ```
 
@@ -29,6 +30,8 @@ if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-
 if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
 if(!require(data.table)) install.packages("data.table", repos = "http://cran.us.r-project.org")
 if(!require(kableExtra)) install.packages("kableExtra", repos = "http://cran.us.r-project.org")
+if(!require(OneR)) install.packages("OneR", repos = "http://cran.us.r-project.org")
+if(!require(lubridate)) install.packages("lubridate", repos = "http://cran.us.r-project.org")
 
 library(tidyverse)
 library(caret)
